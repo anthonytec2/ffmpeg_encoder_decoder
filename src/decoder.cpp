@@ -352,6 +352,10 @@ int Decoder::receiveFrame()
       image->header.frame_id = it->second.frame_id;
       image->header.stamp = it->second.time;
       ptsToStamp_.erase(it);
+
+      // Track successfully decoded PTS
+      decodedPTS_.push_back(swFrame_->pts);
+
 #ifdef USE_AV_FLAGS
       callback_(image, swFrame_->flags, utils::pix(static_cast<AVPixelFormat>(frame->format)));
 #else
@@ -478,6 +482,14 @@ void Decoder::findDecoders(
 std::string Decoder::findDecoders(const std::string & codec)
 {
   return (utils::find_decoders(codec));
+}
+
+std::vector<uint64_t> Decoder::getAndClearDecodedPTS()
+{
+  Lock lock(mutex_);
+  std::vector<uint64_t> result = std::move(decodedPTS_);
+  decodedPTS_.clear();
+  return result;
 }
 
 // -------------- deprecated, DO NOT USE ------------------

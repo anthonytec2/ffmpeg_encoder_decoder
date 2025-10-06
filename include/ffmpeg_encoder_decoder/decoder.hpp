@@ -109,6 +109,12 @@ public:
   }
 
   /**
+   * \brief Gets and clears the list of successfully decoded PTS values.
+   * \return vector of PTS values that were successfully decoded since last call
+   */
+  std::vector<uint64_t> getAndClearDecodedPTS();
+
+  /**
    * \brief Initializes the decoder for a given codec and libav decoder.
    *
    * Initializes the decoder, with multiple decoders to pick from.
@@ -248,6 +254,7 @@ private:
   rclcpp::Logger logger_;
   Callback callback_;
   PTSMap ptsToStamp_;
+  std::vector<uint64_t> decodedPTS_;  // Track successfully decoded PTS values
   std::vector<std::pair<std::string, std::string>> avOptions_;
   mutable std::mutex mutex_;
   // --- performance analysis
