@@ -352,6 +352,14 @@ public:
   void encodeImage(
     const cv::Mat & img, const Header & header, const rclcpp::Time & t0 = rclcpp::Clock().now());
   /**
+  * \brief encodes a raw libav frame (bypasses cv_bridge). May produce callbacks.
+  * \param src AVFrame in libav pixel format; copied/converted into encoder's input frame
+  * \param header supplies stamp and frame_id
+  * \param t0 start time for performance timing
+  */
+  void encodeAVFrame(
+    const AVFrame * src, const Header & header, const rclcpp::Time & t0 = rclcpp::Clock().now());
+  /**
   * flush all packets (produces callbacks).
   * \deprecated Only header.frame_id is used. Used flush(frame_id) now.
   */

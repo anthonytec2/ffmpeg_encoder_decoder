@@ -419,6 +419,81 @@ void Encoder::doEncodeImage(const cv::Mat & img, const Header & header, const rc
   }
 }
 
+void Encoder::encodeAVFrame(const AVFrame * src, const Header & header, const rclcpp::Time & t0)
+{
+  Lock lock(mutex_);
+  rclcpp::Time t1, t2, t3;
+  if (measurePerformance_) {
+    frameCnt_++;
+    t1 = rclcpp::Clock().now();
+    // approximate input size as Y plane area; not exact for all formats
+    totalInBytes_ += codecContext_ ? (codecContext_->width * codecContext_->height) : 0;
+  }
+
+  // Fast path: same pixel format, just copy planes
+  if (src->format == frame_->format && src->width == frame_->width && src->height == frame_->height) {
+    av_image_copy(
+      frame_->data, frame_->linesize, const_cast<const uint8_t **>(src->data), src->linesize,
+      static_cast<AVPixelFormat>(frame_->format), frame_->width, frame_->height);
+  } else {
+    // Ensure swsContext_ matches src->format -> frame_->format conversion
+    static int lastSrcFormat = -1, lastDstFormat = -1;
+    static int lastSrcW = 0, lastSrcH = 0, lastDstW = 0, lastDstH = 0;
+    if (!swsContext_ || lastSrcFormat != src->format || lastDstFormat != frame_->format ||
+        lastSrcW != src->width || lastSrcH != src->height ||
+        lastDstW != frame_->width || lastDstH != frame_->height) {
+      if (swsContext_) {
+        sws_freeContext(swsContext_);
+        swsContext_ = NULL;
+      }
+      swsContext_ = sws_getContext(
+        src->width, src->height, static_cast<AVPixelFormat>(src->format),  // src
+        frame_->width, frame_->height, static_cast<AVPixelFormat>(frame_->format),  // dst
+        SWS_FAST_BILINEAR | SWS_ACCURATE_RND, NULL, NULL, NULL);
+      if (!swsContext_) {
+        throw std::runtime_error("cannot allocate sws context for AVFrame encode");
+      }
+      lastSrcFormat = src->format;
+      lastDstFormat = frame_->format;
+      lastSrcW = src->width;
+      lastSrcH = src->height;
+      lastDstW = frame_->width;
+      lastDstH = frame_->height;
+    }
+    sws_scale(
+      swsContext_, const_cast<const uint8_t **>(src->data), src->linesize, 0,  // src
+      frame_->height, frame_->data, frame_->linesize);                          // dest
+  }
+
+  if (measurePerformance_) {
+    t2 = rclcpp::Clock().now();
+    tdiffFrameCopy_.update((t2 - t1).seconds());
+  }
+
+  frame_->pts = pts_++;
+  ptsToStamp_.insert(PTSMap::value_type(frame_->pts, {header.stamp, header.frame_id}));
+
+  int ret;
+  if (usesHardwareFrames_) {
+    ret = av_hwframe_transfer_data(hw_frame_, frame_, 0);
+    utils::check_for_err("error while copying frame to hw", ret);
+    hw_frame_->pts = frame_->pts;
+  }
+
+  ret = avcodec_send_frame(codecContext_, usesHardwareFrames_ ? hw_frame_ : frame_);
+  if (measurePerformance_) {
+    t3 = rclcpp::Clock().now();
+    tdiffSendFrame_.update((t3 - t2).seconds());
+  }
+  while (ret == 0) {
+    ret = drainPacket(frame_->width, frame_->height);
+  }
+  if (measurePerformance_) {
+    const rclcpp::Time t4 = rclcpp::Clock().now();
+    tdiffTotal_.update((t4 - t0).seconds());
+  }
+}
+
 void Encoder::flush()
 {
   if (!frame_) {

@@ -89,6 +89,18 @@ public:
     const ImageConstPtr & img, bool isKeyFrame, const std::string & avPixFormat)>;
 
   /**
+   * \brief callback function signature for raw AVFrame delivery
+   * \param frame decoded frame owned by decoder (do not free)
+   * \param avPixFormat libav pixel format string of the frame
+   * \param frame_id original frame id
+   * \param stamp original timestamp
+   * \param isKeyFrame true if keyframe
+   */
+  using RawCallback = std::function<void(
+    const AVFrame * frame, const std::string & avPixFormat, const std::string & frame_id,
+    const rclcpp::Time & stamp, bool isKeyFrame)>;
+
+  /**
    * \brief Constructor.
    */
   Decoder();
@@ -124,6 +136,19 @@ public:
    * \return true if initialized successfully.
    */
   bool initialize(const std::string & codec, Callback callback, const std::string & decoder);
+
+  /**
+   * \brief Initializes the decoder to deliver raw AVFrames.
+   *
+   * This mode avoids constructing ROS Image messages and instead calls back with
+   * libav AVFrame pointers. Frames are owned by the decoder and only valid during
+   * the callback. Copy data if it must outlive the callback.
+   * \param codec the codec (encoding) from the first packet.
+   * \param callback function to call with decoded AVFrames.
+   * \param decoder the libav decoder to use.
+   * \return true if initialized successfully.
+   */
+  bool initializeRaw(const std::string & codec, RawCallback callback, const std::string & decoder);
 
   /**
    * \brief Sets the ROS output message encoding format.
@@ -253,6 +278,7 @@ private:
   // --------------- variables
   rclcpp::Logger logger_;
   Callback callback_;
+  RawCallback rawCallback_;
   PTSMap ptsToStamp_;
   std::vector<uint64_t> decodedPTS_;  // Track successfully decoded PTS values
   std::vector<std::pair<std::string, std::string>> avOptions_;
@@ -260,6 +286,7 @@ private:
   // --- performance analysis
   bool measurePerformance_{false};
   TDiff tdiffTotal_;
+  bool produceRawFrames_{false};
   // --- libav related variables
   AVRational timeBase_{1, 100};
   std::string packetEncoding_;

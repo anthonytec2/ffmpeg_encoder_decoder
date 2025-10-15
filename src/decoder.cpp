@@ -84,6 +84,18 @@ bool Decoder::initialize(
 {
   Lock lock(mutex_);
   callback_ = callback;
+  rawCallback_ = RawCallback();
+  produceRawFrames_ = false;
+  return (initDecoder(encoding, decoder));
+}
+
+bool Decoder::initializeRaw(
+  const std::string & encoding, RawCallback callback, const std::string & decoder)
+{
+  Lock lock(mutex_);
+  rawCallback_ = callback;
+  callback_ = Callback();
+  produceRawFrames_ = true;
   return (initDecoder(encoding, decoder));
 }
 
@@ -334,33 +346,49 @@ int Decoder::receiveFrame()
   AVFrame * frame = isAcc ? cpuFrame_ : swFrame_;
   if (frame->width == ctx->width && frame->height == ctx->height) {
     // prepare the decoded message
-    ImagePtr image(new Image());
-    image->height = frame->height;
-    image->width = frame->width;
-    image->step = (sensor_msgs::image_encodings::bitDepth(outputMsgEncoding_) / 8) * image->width *
-                  sensor_msgs::image_encodings::numChannels(outputMsgEncoding_);
-    image->encoding = outputMsgEncoding_;
-    const int retc = convertFrameToMessage(frame, image);
-    if (retc != 0) {
-      return (retc);
-    }
-
     auto it = ptsToStamp_.find(swFrame_->pts);
     if (it == ptsToStamp_.end()) {
       RCLCPP_ERROR_STREAM(logger_, "cannot find pts that matches " << swFrame_->pts);
     } else {
-      image->header.frame_id = it->second.frame_id;
-      image->header.stamp = it->second.time;
+      const auto frame_id = it->second.frame_id;
+      const auto stamp = it->second.time;
       ptsToStamp_.erase(it);
 
       // Track successfully decoded PTS
       decodedPTS_.push_back(swFrame_->pts);
-
+      if (produceRawFrames_ && rawCallback_) {
+        rawCallback_(
+          frame, utils::pix(static_cast<AVPixelFormat>(frame->format)), frame_id, stamp,
 #ifdef USE_AV_FLAGS
-      callback_(image, swFrame_->flags, utils::pix(static_cast<AVPixelFormat>(frame->format)));
+          swFrame_->flags
 #else
-      callback_(image, swFrame_->key_frame, utils::pix(static_cast<AVPixelFormat>(frame->format)));
+          swFrame_->key_frame
 #endif
+        );
+      } else if (callback_) {
+        // prepare ROS image only if requested
+        ImagePtr image(new Image());
+        image->height = frame->height;
+        image->width = frame->width;
+        image->step =
+          (sensor_msgs::image_encodings::bitDepth(outputMsgEncoding_) / 8) * image->width *
+          sensor_msgs::image_encodings::numChannels(outputMsgEncoding_);
+        image->encoding = outputMsgEncoding_;
+        const int retc = convertFrameToMessage(frame, image);
+        if (retc != 0) {
+          return (retc);
+        }
+        image->header.frame_id = frame_id;
+        image->header.stamp = stamp;
+        callback_(
+          image,
+#ifdef USE_AV_FLAGS
+          swFrame_->flags,
+#else
+          swFrame_->key_frame,
+#endif
+          utils::pix(static_cast<AVPixelFormat>(frame->format)));
+      }
     }
   }
   return (ret);
